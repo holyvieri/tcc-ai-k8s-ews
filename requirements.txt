@@ -1,0 +1,12 @@
+# TCC - Autoscaling Preditivo para EWS
+# Versoes pinadas (conhecidas e estaveis). Para atualizar, mude aqui e rode:
+#   pip install -r requirements.txt
+tensorflow==2.17.0
+xgboost==2.1.1
+pandas==2.2.2
+scikit-learn==1.5.1
+matplotlib==3.9.2
+prometheus-api-client==0.5.5
+kubernetes==30.1.0
+locust==2.31.3
+ipykernel==6.29.5
