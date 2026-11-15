@@ -17,17 +17,32 @@ CALIBRAÇÃO TEMPORAL (GloFAS):
   de flash crowd - não há relação conhecida entre vazão e acessos ao sistema.
   As fases são aproximadas por segmentos lineares (simplificação declarada).
 
+DIMENSIONAMENTO (revisado após checagem de saturação):
+  A 1a versão (15 -> 150 usuários, think time 1-2 s) gerava ~12x a taxa de
+  requisições do Perfil A e saturaria o limite de CPU padrão da Boutique
+  (frontend = 200m), "achatando" o pico medido. Agora: o nível de ROTINA do B é
+  o mesmo do Perfil A (30 usuários, mesmo think time 1-10 s), de modo que os dois
+  cenários partem do MESMO regime de rotina; o B acrescenta o evento (10:1).
+  O teto de CPU dos serviços foi elevado no setup (ver setup-experimento.ps1) e
+  o pico foi CONFERIDO por medição (modo CALIBRACAO + checar_saturacao.py).
+
 Como rodar:
     kubectl port-forward svc/frontend 8080:80
     locust -f locust/perfil_b.py --host http://localhost:8080 --headless --csv dados/locust_perfil_b
+
+Calibração rápida do pico (4 min; rode com o coletor ligado):
+    $env:CALIBRACAO = "1"
+    locust -f locust/perfil_b.py --host http://localhost:8080 --headless
+    Remove-Item Env:CALIBRACAO
 """
+import os
 import random
 
 from locust import FastHttpUser, LoadTestShape, between, task
 
 # ------------- parâmetros do pico (calibrados c/ GloFAS) -------------
-USUARIOS_ROTINA = 15     # carga de base antes do evento
-USUARIOS_PICO = 150      # auge do evento (10:1 - literatura de flash crowd)
+USUARIOS_ROTINA = 30     # = nível de rotina do Perfil A (mesmo regime de base)
+USUARIOS_PICO = 300      # auge do evento (10:1 - literatura de flash crowd)
 ROTINA_MIN = 30          # minutos de rotina antes do pico
 SUBIDA_MIN = 21          # GloFAS: ~3,5 dias de subida x 6 min/dia
 SUSTENTACAO_MIN = 18     # GloFAS: ~3 dias de pico x 6 min/dia
@@ -35,7 +50,7 @@ DECAIMENTO_MIN = 42      # GloFAS: ~7 dias de recessão x 6 min/dia
 CICLOS = 3               # repete o ciclo (rotina->pico->decaimento) N vezes
 # -------------------------------------------------------------------
 
-# IDs de produto da Online Boutique
+# IDs de produto da Online Boutique (mesma lista do locustfile oficial)
 PRODUTOS = [
     "0PUK6V6EV0", "1YMWWN1N4O", "2ZYFJ3GM2N", "66VCHSJNUP", "6E92ZMYYFZ",
     "9SIQT8TOJO", "L9ECAV7KIM", "LS4PSXUNUM", "OLJCESPC7Z",
@@ -49,7 +64,7 @@ class UsuarioEmergencia(FastHttpUser):
     o mesmo do Perfil A, para que a diferença entre perfis venha da carga e
     não do cliente HTTP."""
 
-    wait_time = between(1, 2)  # think time curto: premissa de urgência (declarada)
+    wait_time = between(1, 10)  # mesmo think time do Perfil A / locustfile oficial
 
     def on_start(self):
         self.client.get("/")  # entrada pela home, como no locustfile oficial
@@ -79,6 +94,13 @@ class CargaPico(LoadTestShape):
     """
 
     def tick(self):
+        # Modo calibração: 1 min de rotina + 3 min no pico, depois encerra.
+        if os.environ.get("CALIBRACAO"):
+            t = self.get_run_time()
+            if t > 240:
+                return None
+            return (USUARIOS_ROTINA if t < 60 else USUARIOS_PICO, 50)
+
         ciclo_s = (ROTINA_MIN + SUBIDA_MIN + SUSTENTACAO_MIN + DECAIMENTO_MIN) * 60
         t_total = self.get_run_time()
         if t_total > CICLOS * ciclo_s:

@@ -114,7 +114,15 @@ def main() -> None:
     ruim_carga = ((taxa > LIMIAR_FALHA) | ((req_s == 0) & (usr > 0))).loc[inicio:fim]
 
     grade_m = m[ALVO].resample("15s").mean()
-    falta_coleta = grade_m.isna().reindex(ruim_carga.index, fill_value=False)
+    na = grade_m.isna()
+    # Buracos de coleta de até 1 min (4 passos) NÃO cortam a série: o
+    # preparacao.py os interpola. Só buracos maiores viram episódio.
+    grupo = (na != na.shift()).cumsum()
+    tamanho = na.groupby(grupo).transform("size")
+    falta_coleta = (na & (tamanho > 4)).reindex(ruim_carga.index, fill_value=False)
+    micro = int((na & (tamanho <= 4)).sum())
+    if micro:
+        print(f"Micro-buracos de coleta tolerados (interpolados na preparação): {micro} passo(s) de 15s")
 
     total_req, total_fal = float(tot["Total Request Count"].iloc[-1]), float(tot["Total Failure Count"].iloc[-1])
     print(f"Requisições: {int(total_req)}  | falhas: {int(total_fal)} "

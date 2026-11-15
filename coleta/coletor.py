@@ -35,8 +35,13 @@ SERVICOS = [
 # PromQL: CPU como taxa de uso em núcleos (janela de 1 min) e memória working set
 # (working set é o que o kubelet usa pra decidir OOM Kill - por isso essa métrica
 #  e não a RSS: é exatamente o número que interessa pro OE3).
-Q_CPU = 'sum(rate(container_cpu_usage_seconds_total{{namespace="default", pod=~"{svc}.*"}}[1m]))'
-Q_MEM = 'sum(container_memory_working_set_bytes{{namespace="default", pod=~"{svc}.*"}})'
+# IMPORTANTE: o cAdvisor expõe, além do container da aplicação, uma série do
+# cgroup do pod inteiro (container="") - que já é a soma dos containers - e a do
+# container de pausa (container="POD"). Sem o filtro abaixo, o sum() conta o
+# consumo ~2x. Filtramos para somar SÓ os containers de aplicação.
+_FILTRO = 'namespace="default", pod=~"{svc}.*", container!="", container!="POD"'
+Q_CPU = 'sum(rate(container_cpu_usage_seconds_total{{' + _FILTRO + '}}[1m]))'
+Q_MEM = 'sum(container_memory_working_set_bytes{{' + _FILTRO + '}})'
 
 
 def consultar(prom: PrometheusConnect, query: str) -> float:

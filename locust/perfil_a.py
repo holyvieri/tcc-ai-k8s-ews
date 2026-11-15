@@ -30,12 +30,12 @@ from locust import FastHttpUser, LoadTestShape, TaskSet, between, task
 USUARIOS_BASE = 30      # nível médio de usuários simultâneos
 AMPLITUDE = 10          # oscilação em torno da base (+-33%)
 PERIODO_MIN = 20        # período da oscilação (2x o maior horizonte de predição)
-DURACAO_MIN = 360       # duração total (6h -> ~1440 pontos a 15s)
+DURACAO_MIN = 340       # duração total
 # ---------------------------------------------------------------------------------
 
 # IDs de produto da Online Boutique
 PRODUTOS = [
-    "0PUK6V6EV0", "1YMWWN1N4O", "2ZYFJ3GM2N", "66VCHSJNUP", "6E92ZMYYFZ",
+    "0PUK6V6EV0", "1YMWWumaN1N4O", "2ZYFJ3GM2N", "66VCHSJNUP", "6E92ZMYYFZ",
     "9SIQT8TOJO", "L9ECAV7KIM", "LS4PSXUNUM", "OLJCESPC7Z",
 ]
 MOEDAS = ["EUR", "USD", "JPY", "CAD", "GBP", "TRY"]
