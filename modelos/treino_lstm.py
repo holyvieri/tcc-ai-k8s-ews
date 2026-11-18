@@ -1,20 +1,12 @@
 """
-Treino da LSTM (Fase 3 do protocolo)
+Treina uma LSTM por horizonte (1 e 10 min) para prever a CPU do frontend.
 
-Hiperparâmetros fixados pelo levantamento bibliográfico (Seção 3.5.3 do TCC):
-  2 camadas (64 -> 32), dropout 0.2, Adam lr=1e-3, batch 32, até 100 épocas
-  com early stopping (paciência 10, val_loss), lookback de 20 passos (5 min a 15s).
+Entrada: janelas com os últimos 20 passos (5 min) de todas as features.
+Hiperparâmetros da revisão bibliográfica: 64 -> 32 unidades, dropout 0.2,
+Adam 1e-3, batch 32, até 100 épocas com early stopping (paciência 10).
+As predições no teste vão para resultados/pred_lstm_<perfil>_h<H>.csv.
 
-Como funciona:
-  - A série vira pares (janela, alvo): a janela são os últimos 20 passos de
-    TODAS as features; o alvo é o valor do frontend_cpu H passos à frente.
-  - Treina um modelo POR HORIZONTE (1 min = 4 passos; 10 min = 40 passos).
-  - As predições sobre o TESTE são salvas em resultados/pred_lstm_<perfil>_h<H>.csv
-    para a avaliação (OE2) e para o OE3.
-
-Uso:
-    python modelos/treino_lstm.py --perfil a
-    python modelos/treino_lstm.py --perfil b
+Uso: python modelos/treino_lstm.py --perfil a
 """
 import argparse
 from pathlib import Path
@@ -24,32 +16,29 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks
 
-LOOKBACK = 20            # 20 passos x 15s = 5 min de contexto
-HORIZONTES = [4, 40]     # em passos: 1 min e 10 min (recorte final do escopo)
-SEED = 42                # reprodutibilidade
+LOOKBACK = 20            # 5 min
+HORIZONTES = [4, 40]     # 1 min e 10 min
+SEED = 42
+tf.keras.utils.set_random_seed(SEED)
 
 
 def montar_janelas(serie: np.ndarray, h: int):
-    """Transforma a série (N, n_features) em:
-       X: (amostras, LOOKBACK, n_features)  - as janelas de entrada
-       y: (amostras,)                        - alvo (coluna 0) h passos à frente
-    """
+    # X: (amostras, LOOKBACK, n_features); y: coluna 0, h passos após o fim da janela
     X, y = [], []
-    for i in range(LOOKBACK, len(serie) - h):
+    for i in range(LOOKBACK, len(serie) - h + 1):
         X.append(serie[i - LOOKBACK:i, :])
-        y.append(serie[i + h, 0])  # coluna 0 = alvo (frontend_cpu)
+        y.append(serie[i - 1 + h, 0])
     return np.array(X), np.array(y)
 
 
 def construir_modelo(n_features: int) -> models.Model:
-    tf.random.set_seed(SEED)
     m = models.Sequential([
         layers.Input(shape=(LOOKBACK, n_features)),
-        layers.LSTM(64, return_sequences=True),   # 1a camada vê a sequência inteira
+        layers.LSTM(64, return_sequences=True),
         layers.Dropout(0.2),
-        layers.LSTM(32),                          # 2a camada condensa num vetor
+        layers.LSTM(32),
         layers.Dropout(0.2),
-        layers.Dense(1),                          # saída: valor previsto (regressão)
+        layers.Dense(1),
     ])
     m.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss="mse")
     return m
@@ -72,7 +61,7 @@ def main() -> None:
         modelo = construir_modelo(Xtr.shape[2])
         modelo.fit(
             Xtr, ytr,
-            validation_split=0.15,          # fatia FINAL do treino p/ early stopping
+            validation_split=0.15,          # últimos 15% do treino
             epochs=100, batch_size=32,
             callbacks=[callbacks.EarlyStopping(patience=10, restore_best_weights=True)],
             verbose=2,

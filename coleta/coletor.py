@@ -1,19 +1,9 @@
 """
-Coletor de métricas (Fase 1 do protocolo): Prometheus -> CSV
+Coleta CPU e memória de cada serviço da Online Boutique no Prometheus, a cada
+15 s, e grava em CSV (dataset bruto).
 
-A cada INTERVALO_S segundos, consulta o Prometheus e grava uma linha no CSV
-com CPU e memória de cada microsserviço da Online Boutique. Esse CSV É o
-dataset bruto da pesquisa.
-
-Pré-requisito (noutro terminal, deixar aberto):
-    kubectl port-forward svc/monitoring-kube-prometheus-prometheus -n monitoring 9090:9090
-
-Como rodar (deixar rodando junto com o Locust, por horas):
-    conda activate tcc-ews
-    python coleta/coletor.py --saida dados/metricas_perfil_a.csv
-
-Use um arquivo de saída POR PERFIL (troque o nome ao trocar o perfil do Locust),
-senão os dois perfis se misturam num CSV só.
+Requer o port-forward do Prometheus em localhost:9090.
+Uso: python coleta/coletor.py --saida dados/metricas_perfil_a.csv
 """
 import argparse
 import csv
@@ -23,29 +13,23 @@ from pathlib import Path
 
 from prometheus_api_client import PrometheusConnect
 
-INTERVALO_S = 15  # mesmo intervalo que fecha o lookback da LSTM (20 passos = 5 min)
+INTERVALO_S = 15  # 20 passos de 15 s = lookback de 5 min da LSTM
 
-# Serviços da Online Boutique que entram no vetor multivariado
 SERVICOS = [
     "frontend", "cartservice", "productcatalogservice", "currencyservice",
     "paymentservice", "shippingservice", "emailservice", "checkoutservice",
     "recommendationservice", "adservice", "redis-cart",
 ]
 
-# PromQL: CPU como taxa de uso em núcleos (janela de 1 min) e memória working set
-# (working set é o que o kubelet usa pra decidir OOM Kill - por isso essa métrica
-#  e não a RSS: é exatamente o número que interessa pro OE3).
-# IMPORTANTE: o cAdvisor expõe, além do container da aplicação, uma série do
-# cgroup do pod inteiro (container="") - que já é a soma dos containers - e a do
-# container de pausa (container="POD"). Sem o filtro abaixo, o sum() conta o
-# consumo ~2x. Filtramos para somar SÓ os containers de aplicação.
+# CPU em núcleos (rate de 1 min) e memória working set, que é a usada pelo
+# kubelet para OOM Kill. O filtro de container exclui a série agregada do pod
+# (container="") e o container de pausa, que dobrariam a soma.
 _FILTRO = 'namespace="default", pod=~"{svc}.*", container!="", container!="POD"'
 Q_CPU = 'sum(rate(container_cpu_usage_seconds_total{{' + _FILTRO + '}}[1m]))'
 Q_MEM = 'sum(container_memory_working_set_bytes{{' + _FILTRO + '}})'
 
 
 def consultar(prom: PrometheusConnect, query: str) -> float:
-    """Executa uma query instantânea e devolve o valor (ou 0.0 se vazio)."""
     r = prom.custom_query(query=query)
     if not r:
         return 0.0
@@ -79,14 +63,12 @@ def main() -> None:
                     linha.append(consultar(prom, Q_CPU.format(svc=s)))
                 for s in SERVICOS:
                     linha.append(consultar(prom, Q_MEM.format(svc=s)))
-            except Exception as erro:  # ex.: port-forward do Prometheus caiu
-                # Não derruba a coleta de horas: grava a linha com NaN (o
-                # verificar_coleta.py trata o buraco) e tenta de novo no próximo ciclo.
+            except Exception as erro:
+                # falha pontual (ex.: port-forward caiu): grava NaN e segue
                 print(f"[{datetime.now():%H:%M:%S}] consulta falhou ({type(erro).__name__}); linha NaN")
                 linha = [carimbo] + [float("nan")] * (2 * len(SERVICOS))
             w.writerow(linha)
-            f.flush()  # grava já: se o PC desligar, o coletado até aqui sobrevive
-            # dorme o que falta para completar exatamente INTERVALO_S
+            f.flush()
             time.sleep(max(0, INTERVALO_S - (time.time() - inicio)))
 
 

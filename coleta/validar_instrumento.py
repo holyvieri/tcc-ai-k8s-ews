@@ -1,24 +1,11 @@
 """
-Validação do instrumento de coleta (rodar ANTES de qualquer rodada longa)
+Valida as consultas do coletor antes de uma rodada longa.
 
-Prova, contra uma referência independente, que as consultas do coletor medem
-o que dizem medir - em ~1 minuto, não depois de 6 horas.
+Compara a memória somada dos containers de aplicação com a série do cgroup do
+pod (a razão deve ficar perto de 1; perto de 2 indica dupla contagem) e
+confere se CPU e memória estão em faixas fisicamente possíveis.
 
-A referência: o cAdvisor expõe, para cada pod, a série do cgroup do POD
-(container="") que É a soma real dos containers. Então, para cada serviço:
-    A = consulta do coletor (containers de aplicação)
-    P = série do cgroup do pod
-  * Coletor correto:  A ~= P (pausa é desprezível)   -> razão A/P ~= 1
-  * Bug de dupla contagem (somar tudo): A ~= 2P      -> razão ~= 2  -> REPROVA
-
-Checagens físicas adicionais (um número impossível = instrumento errado):
-  * memória de cada serviço DENTRO do limite do manifesto e > 0
-  * CPU >= 0 e abaixo do teto configurado
-
-Uso (port-forward do Prometheus ativo):
-    python coleta/validar_instrumento.py
-Sai com código 0 (APROVADO) ou 1 (REPROVADO) - dá para encadear:
-    python coleta/validar_instrumento.py; if ($?) { python coleta/coletor.py ... }
+Uso: python coleta/validar_instrumento.py   (sai com código 1 se reprovar)
 """
 import sys
 
@@ -26,6 +13,7 @@ from prometheus_api_client import PrometheusConnect
 
 from coletor import Q_CPU, Q_MEM, SERVICOS, consultar
 
+# limites de memória (MiB) do manifesto da Online Boutique
 LIMITES_MEM_MI = {
     "adservice": 300, "cartservice": 128, "checkoutservice": 128,
     "currencyservice": 128, "emailservice": 128, "frontend": 128,
@@ -34,7 +22,7 @@ LIMITES_MEM_MI = {
 }
 Q_MEM_POD = ('sum(container_memory_working_set_bytes{{namespace="default", '
              'pod=~"{svc}.*", container=""}})')
-TOLERANCIA = 0.25   # |A/P - 1| aceitável (pausa + jitter de scrape)
+TOLERANCIA = 0.25   # desvio aceitável da razão app/pod
 
 
 def main() -> None:

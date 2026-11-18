@@ -1,0 +1,13 @@
+estrategia,perfil,horizonte_min,subprov_sem_margem,subprov_com_20pct,margem_estrito_1pct,overprov_estrito_1pct,margem_tolerante_5pct,overprov_tolerante_5pct
+LSTM,A,1.0,0.5377,0.1039,nao atingida ate 20%,,nao atingida ate 20%,
+LSTM,A,10.0,0.4413,0.0917,nao atingida ate 20%,,nao atingida ate 20%,
+LSTM,B,1.0,0.6286,0.2281,nao atingida ate 20%,,nao atingida ate 20%,
+LSTM,B,10.0,0.9003,0.7977,nao atingida ate 20%,,nao atingida ate 20%,
+REATIVO_SIM,A,1.0,0.5429,0.174,nao atingida ate 20%,,nao atingida ate 20%,
+REATIVO_SIM,A,10.0,0.4756,0.3266,nao atingida ate 20%,,nao atingida ate 20%,
+REATIVO_SIM,B,1.0,0.5093,0.1432,nao atingida ate 20%,,nao atingida ate 20%,
+REATIVO_SIM,B,10.0,0.4545,0.3226,nao atingida ate 20%,,nao atingida ate 20%,
+XGB,A,1.0,0.4883,0.1091,nao atingida ate 20%,,nao atingida ate 20%,
+XGB,A,10.0,0.5415,0.1232,nao atingida ate 20%,,nao atingida ate 20%,
+XGB,B,1.0,0.4058,0.0504,nao atingida ate 20%,,nao atingida ate 20%,
+XGB,B,10.0,0.5513,0.3343,nao atingida ate 20%,,nao atingida ate 20%,

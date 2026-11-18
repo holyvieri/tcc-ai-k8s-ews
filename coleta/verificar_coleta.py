@@ -1,46 +1,27 @@
 """
-Verificação e recorte da coleta (rodar DEPOIS de cada rodada do Locust)
+Recorta a coleta bruta para o período em que o Locust estava gerando carga.
 
-Por que existe: o coletor roda "solto" - começa antes do Locust e costuma ser
-parado horas depois dele terminar - e, numa rodada longa, pode haver quedas
-momentâneas (ex.: o port-forward do kubectl cai e volta). Dados de períodos sem
-carga ou sem coleta contaminam o dataset: a CPU "despenca" por um defeito do
-ambiente, e o modelo aprenderia um padrão que não existe na carga.
+Remove episódios com maioria de requisições falhando ou com buraco de coleta
+(com 1 min de margem), mantém o maior trecho contínuo, gera um gráfico de
+conferência e grava dados/metricas_perfil_<p>_recortado.csv. O CSV bruto não
+é alterado.
 
-O que faz:
- 1. Lê o histórico do Locust (dados/locust_<perfil>_stats_history.csv) e acha a
-    janela em que HOUVE carga (usuários > 0).
- 2. Acha os EPISÓDIOS RUINS dentro dessa janela:
-      - carga: a maioria das requisições falhou (ou nenhuma completou);
-      - coleta: o coletor não gravou nada / gravou NaN.
-    Cada episódio é listado (início, fim, duração) e recebe 1 min de margem
-    (a CPU usa rate de 1 min, então o efeito "vaza" um pouco).
- 3. Retira os episódios e fica com o MAIOR TRECHO CONTÍNUO limpo (a série segue
-    sem buracos, o que o split temporal e as janelas da LSTM exigem).
- 4. Confere o trecho: falhas residuais, estatística da CPU do frontend e a
-    CORRELAÇÃO usuários x CPU (prova de que o consumo responde à carga).
- 5. Gera resultados/verificacao_perfil_<p>.png e grava
-    dados/metricas_perfil_<p>_recortado.csv - ESTE vai para o preparacao.py.
-    O CSV bruto NUNCA é alterado (reprodutibilidade).
-
-Uso:
-    python coleta/verificar_coleta.py --perfil a
-    python coleta/verificar_coleta.py --perfil b
+Uso: python coleta/verificar_coleta.py --perfil a
 """
 import argparse
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # só grava arquivo, não abre janela
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
 ALVO = "frontend_cpu"
-LIMIAR_FALHA = 0.5       # passo de 15s é "ruim" se > 50% das requisições falharam
+LIMIAR_FALHA = 0.5       # passo ruim: mais de 50% das requisições falharam
 FUNDE_S = 60             # episódios separados por <= 60 s viram um só
 MARGEM_S = 60            # margem removida em volta de cada episódio
-MIN_LINHAS = {"a": 1000, "b": 900}   # abaixo disso o dataset é curto p/ a LSTM
+MIN_LINHAS = {"a": 1000, "b": 900}   # mínimo razoável para treinar a LSTM
 FUSO_LOCAL = "America/Recife"
 
 
@@ -55,7 +36,7 @@ def carregar_locust(prefixo: str) -> pd.DataFrame:
 
 
 def episodios(flag: pd.Series) -> list:
-    """Sequências consecutivas de True -> [[inicio, fim], ...], fundindo as próximas."""
+    # agrupa sequências de True em [inicio, fim], unindo as que estão próximas
     brutos, atual = [], None
     for t, f in flag.items():
         if f:
@@ -97,7 +78,7 @@ def main() -> None:
     print(f"CSV bruto: {len(m)} linhas = {len(m) * 15 / 3600:.1f} h  "
           f"({local(m.index[0])} -> {local(m.index[-1])} hora local)")
 
-    # ---------- janela com carga ----------
+    # janela em que o Locust tinha usuários ativos
     ativo = loc[loc["User Count"] > 0]
     if ativo.empty:
         raise SystemExit("Locust sem nenhum instante com usuários > 0 - a carga nunca rodou?")
@@ -105,7 +86,7 @@ def main() -> None:
     print(f"Carga do Locust: {local(inicio)} -> {local(fim)} hora local "
           f"({(fim - inicio).total_seconds() / 3600:.2f} h, pico de {int(ativo['User Count'].max())} usuários)")
 
-    # ---------- passos de 15s: falhas de carga e buracos de coleta ----------
+    # falhas de carga e buracos de coleta em passos de 15 s
     tot = loc[["Total Request Count", "Total Failure Count"]].resample("15s").last().ffill()
     d = tot.diff()
     req_s, fal_s = d["Total Request Count"], d["Total Failure Count"]
@@ -115,8 +96,7 @@ def main() -> None:
 
     grade_m = m[ALVO].resample("15s").mean()
     na = grade_m.isna()
-    # Buracos de coleta de até 1 min (4 passos) NÃO cortam a série: o
-    # preparacao.py os interpola. Só buracos maiores viram episódio.
+    # buracos de até 1 min são interpolados depois, então não cortam a série
     grupo = (na != na.shift()).cumsum()
     tamanho = na.groupby(grupo).transform("size")
     falta_coleta = (na & (tamanho > 4)).reindex(ruim_carga.index, fill_value=False)
@@ -142,7 +122,7 @@ def main() -> None:
     else:
         print("\nNenhum episódio ruim dentro da janela de carga.")
 
-    # ---------- trechos contínuos limpos ----------
+    # trechos limpos entre os episódios; fica o maior
     cortes = sorted((max(a - margem, inicio), min(b + passo + margem, fim)) for a, b, _ in eps)
     trechos, cursor = [], inicio
     for a, b in cortes:
@@ -168,7 +148,7 @@ def main() -> None:
     if len(rec) < MIN_LINHAS[p]:
         print(f"AVISO: menos de ~{MIN_LINHAS[p]} linhas úteis - dataset curto para a LSTM.")
 
-    # ---------- sanidade do trecho escolhido ----------
+    # conferência do trecho escolhido
     mask = (tot.index >= s0) & (tot.index <= s1)
     r, f = float(req_s[mask].sum()), float(fal_s[mask].sum())
     print(f"Falhas dentro do recorte: {int(f)} de {int(r)} requisições ({100 * f / max(r, 1):.2f}%)")
@@ -188,7 +168,6 @@ def main() -> None:
                "PROBLEMA - CPU quase não responde à carga")
     print(f"Correlação usuários x {ALVO}: {corr:.2f}  -> {leitura}")
 
-    # ---------- gráfico ----------
     Path("resultados").mkdir(exist_ok=True)
     fig, (a1, a2) = plt.subplots(2, 1, figsize=(13, 7), sharex=True,
                                  gridspec_kw={"height_ratios": [3, 1]})

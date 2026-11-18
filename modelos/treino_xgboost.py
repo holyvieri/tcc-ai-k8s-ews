@@ -1,21 +1,12 @@
 """
-Treino do XGBoost (Fase 3 do protocolo)
+Treina um XGBoost por horizonte (1 e 10 min) para prever a CPU do frontend.
 
-Hiperparâmetros fixados pelo levantamento bibliográfico (Seção 3.5.3 do TCC):
-  200 estimadores (early stopping 20), max_depth=6, learning_rate=0.1,
-  subsample=0.8, colsample_bytree=0.8, regularização nos padrões.
+Como árvores não leem sequência, a janela recente vira colunas: lags 0 a 4 de
+todas as features e média/desvio móveis do alvo (3, 6 e 12 passos).
+Hiperparâmetros da revisão bibliográfica: 200 árvores (early stopping 20),
+max_depth 6, learning_rate 0.1, subsample e colsample 0.8.
 
-Como funciona (a diferença conceitual pra LSTM):
-  Árvores não leem sequência - cada amostra precisa ser um vetor "achatado".
-  Então a MESMA informação que a LSTM recebe como janela vira colunas:
-    - lags do alvo e das features: valores em t-1, t-2, t-3, t-4
-    - estatísticas móveis do alvo: média e desvio em janelas de 3, 6 e 12 passos
-  Isso NÃO é dado novo (comparação justa do OE2) - é só outra forma de
-  apresentar a mesma história recente ao modelo.
-
-Uso:
-    python modelos/treino_xgboost.py --perfil a
-    python modelos/treino_xgboost.py --perfil b
+Uso: python modelos/treino_xgboost.py --perfil a
 """
 import argparse
 from pathlib import Path
@@ -24,14 +15,14 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 
-LAGS = [1, 2, 3, 4]
+LAGS = [0, 1, 2, 3, 4]
 JANELAS_MOVEIS = [3, 6, 12]
-HORIZONTES = [4, 40]  # 1 min e 10 min, em passos de 15s
+HORIZONTES = [4, 40]  # 1 min e 10 min
 SEED = 42
+np.random.seed(SEED)
 
 
 def montar_tabela(serie: np.ndarray, colunas: list, h: int) -> pd.DataFrame:
-    """Monta a tabela supervisionada: lags + estatísticas móveis -> alvo em t+h."""
     df = pd.DataFrame(serie, columns=colunas)
     feats = pd.DataFrame(index=df.index)
     for c in colunas:
@@ -40,7 +31,7 @@ def montar_tabela(serie: np.ndarray, colunas: list, h: int) -> pd.DataFrame:
     for w in JANELAS_MOVEIS:
         feats[f"alvo_media{w}"] = df[colunas[0]].rolling(w).mean()
         feats[f"alvo_desvio{w}"] = df[colunas[0]].rolling(w).std()
-    feats["alvo"] = df[colunas[0]].shift(-h)  # o que queremos prever
+    feats["alvo"] = df[colunas[0]].shift(-h)
     return feats.dropna()
 
 
@@ -59,7 +50,7 @@ def main() -> None:
         Xtr, ytr = tr.drop(columns="alvo"), tr["alvo"]
         Xte, yte = te.drop(columns="alvo"), te["alvo"]
 
-        # validação = fatia FINAL do treino (temporal, igual à LSTM)
+        # validação: últimos 15% do treino, como na LSTM
         corte = int(len(Xtr) * 0.85)
         modelo = xgb.XGBRegressor(
             n_estimators=200, max_depth=6, learning_rate=0.1,

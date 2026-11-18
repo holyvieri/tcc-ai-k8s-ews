@@ -1,0 +1,5 @@
+modelo,horizonte_min,persistencia_min,antec_25pct_min,antec_50pct_min,antec_75pct_min,antec_media_min
+LSTM,1.0,-1.0,-3.25,-3.0,-1.5,-2.58
+XGB,1.0,-1.0,-0.25,-1.0,0.25,-0.33
+LSTM,10.0,-10.0,-15.5,-12.75,,-14.12
+XGB,10.0,-10.0,8.5,-10.75,-4.0,-2.08

@@ -1,55 +1,35 @@
 """
-Checagem de saturação: o consumo medido está "batendo no teto"?
+Verifica se o consumo de CPU de algum serviço ficou encostado no limite
+(throttling), o que achataria os picos da série, e se a memória chegou perto
+do limite (risco de OOM Kill).
 
-Por que existe: a Online Boutique traz limites de CPU baixos por serviço (ex.:
-frontend = 200m = 0,2 núcleo). Quando um serviço encosta no limite, o kernel o
-"estrangula" (throttling): a CPU medida fica ACHATADA no teto e deixa de refletir
-a demanda real - o pico some da série e o modelo aprenderia um sinal censurado.
-Este script mostra, por serviço, o quanto do tempo o consumo ficou perto do limite.
-
-Leitura:
-    SATURADO : >= 10% do tempo em >= 90% do limite  -> sinal censurado, não usar
-    ATENCAO  : >=  2% do tempo em >= 90% do limite
-    OK       : abaixo disso
-
-TETO EFETIVO: serviços de runtime single-thread (Node.js: currency, payment;
-Python/GIL: email, recommendation) não passam de ~1 núcleo MESMO com limite de 2.
-Para eles o teto considerado é min(limite, 1.0) - senão a checagem diria "OK" para
-um serviço que já está no máximo que consegue entregar. (Estimativa conservadora.)
+Status de CPU: SATURADO (>= 10% do tempo acima de 90% do limite),
+ATENCAO (>= 2%) ou OK.
 
 Uso:
-    # coleta feita com os limites padrão do manifesto:
     python coleta/checar_saturacao.py --csv dados/metricas_perfil_a_recortado.csv
-    # calibração do pico (limites elevados a 2 núcleos); --so-pico analisa só as
-    # linhas do platô (total de CPU >= 70% do máximo), sem diluir com o repouso:
     python coleta/checar_saturacao.py --csv dados/calibracao_b.csv --limite-global 2 --so-pico
-
-A "CPU total" (soma dos serviços) deve ficar bem abaixo do nº de CPUs do Docker
-Desktop (docker info | Select-String CPUs); senão a própria máquina satura.
 """
 import argparse
 
 import pandas as pd
 
-# Limites do manifesto oficial da Online Boutique v0.10.7
-# (release/kubernetes-manifests.yaml), conferidos no arquivo do clone usado.
+# limites de CPU (núcleos) do manifesto da Online Boutique v0.10.7
 LIMITES_PADRAO = {
     "adservice": 0.3, "cartservice": 0.3, "checkoutservice": 0.2,
     "currencyservice": 0.2, "emailservice": 0.2, "frontend": 0.2,
     "paymentservice": 0.2, "productcatalogservice": 0.2,
     "recommendationservice": 0.2, "shippingservice": 0.2, "redis-cart": 0.125,
 }
-# Limites de MEMÓRIA (MiB) - NÃO foram elevados no setup; sob o pico, memória
-# perto do limite = risco de OOM Kill no meio da coleta (pod reinicia e fura a
-# série). A checagem de memória usa sempre estes valores, mesmo com --limite-global.
+# limites de memória (MiB); não foram alterados no setup
 LIMITES_MEM_MI = {
     "adservice": 300, "cartservice": 128, "checkoutservice": 128,
     "currencyservice": 128, "emailservice": 128, "frontend": 128,
     "paymentservice": 128, "productcatalogservice": 128,
     "recommendationservice": 450, "shippingservice": 128, "redis-cart": 256,
 }
-PERTO = 0.9   # "perto do limite" = >= 90%
-# Teto efetivo (núcleos) de serviços single-thread, independente do limite configurado
+PERTO = 0.9
+# serviços Node.js/Python praticamente single-thread não passam de ~1 núcleo
 TETO_EFETIVO = {"currencyservice": 1.0, "paymentservice": 1.0,
                 "emailservice": 1.0, "recommendationservice": 1.0}
 
@@ -88,7 +68,7 @@ def main() -> None:
         lim_s = f"{lim:.2f}" if lim else "  -"
         print(f"{svc:<24}{lim_s:>8}{med:>9.3f}{p95:>8.3f}{mx:>8.3f}{100 * frac:>10.1f}%  {st}")
 
-    # ---------- memória: proximidade de OOM ----------
+    # memória: proximidade do limite (OOM)
     print(f"\n{'servico':<24}{'lim MiB':>8}{'mediana':>9}{'p95':>8}{'max':>8}{'%>=90%lim':>11}  status")
     for col in [c for c in df.columns if c.endswith("_mem")]:
         svc = col[:-4]
@@ -102,6 +82,7 @@ def main() -> None:
         st = "RISCO OOM" if frac >= 0.02 or x.max() >= 0.97 * lim else "OK"
         print(f"{svc:<24}{lim:>8}{x.median():>9.0f}{x.quantile(0.95):>8.0f}{x.max():>8.0f}{100 * frac:>10.1f}%  {st}")
 
+    # a soma precisa ficar abaixo das CPUs do Docker Desktop
     total = df[[c for c in df.columns if c.endswith("_cpu")]].sum(axis=1)
     print(f"\nCPU total dos serviços: mediana {total.median():.2f} | p95 {total.quantile(0.95):.2f} "
           f"| max {total.max():.2f} núcleos")
